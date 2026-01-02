@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FinTrack Pro - Editable Budget</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root { --primary: #6c5ce7; --success: #27ae60; --danger: #d63031; --bg: #f4f7f6; }
+        body { font-family: 'Inter', sans-serif; background-color: var(--bg); display: flex; flex-direction: column; align-items: center; padding: 15px; margin: 0; }
+        .dashboard { width: 100%; max-width: 500px; display: flex; flex-direction: column; gap: 15px; }
+        .card { background: white; padding: 20px; border-radius: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        .label { color: #636e72; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 1px; font-weight: 700; margin-bottom: 5px; }
+        .value { font-size: 1.6rem; font-weight: 700; color: #2d3436; }
+        
+        .remaining-box { padding: 15px; border-radius: 12px; background: #e8f5e9; margin-top: 10px; border-left: 5px solid var(--success); }
+        .over-budget { background: #ffebee !important; border-left: 5px solid var(--danger); }
+        
+        /* Edit Budget Row */
+        .edit-budget-row { display: flex; align-items: center; gap: 10px; margin-top: 5px; }
+        .edit-input { font-size: 1.1rem; font-weight: 600; color: var(--primary); width: 100%; }
+
+        /* Categories Layout */
+        .category-item { padding: 15px 0; border-bottom: 1px solid #f0f0f0; }
+        .cat-top-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .cat-action-section { display: flex; align-items: center; gap: 15px; }
+        
+        .spend-input-row { display: flex; gap: 8px; }
+        input { padding: 12px; border: 1px solid #dfe6e9; border-radius: 8px; flex: 1; outline: none; }
+        
+        button { padding: 10px 15px; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; }
+        .btn-spend { background: var(--primary); color: white; }
+        .btn-cross { background: none; color: #ced4da; font-size: 1.4rem; padding: 0 5px; line-height: 1; }
+        .btn-cross:hover { color: var(--danger); }
+
+        .history-list { max-height: 250px; overflow-y: auto; margin-top: 10px; }
+        .history-item { display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #f9f9f9; border-radius: 8px; margin-bottom: 8px; font-size: 0.85rem; }
+    </style>
+</head>
+<body>
+
+<div class="dashboard">
+    <div class="card">
+        <h2 style="margin:0; color:var(--primary); margin-bottom:15px;">FinTrack ₹</h2>
+        <div style="display:flex; justify-content:space-between;">
+            <div><div class="label">Current Budget</div><div id="disp-limit" style="font-weight:bold;">₹0</div></div>
+            <div style="text-align:right;"><div class="label">Total Spent</div><div id="disp-spent" style="color:var(--danger); font-weight:bold;">₹0</div></div>
+        </div>
+        <div class="remaining-box" id="rem-container">
+            <div class="label">Available Balance</div>
+            <div class="value" id="disp-rem">₹0</div>
+        </div>
+        <div style="height: 180px; margin-top: 15px;"><canvas id="budgetChart"></canvas></div>
+    </div>
+
+    <div class="card">
+        <div class="label">Edit Monthly Total Budget</div>
+        <div class="edit-budget-row">
+            <input type="number" id="monthly-limit-input" class="edit-input" placeholder="Enter new budget (e.g. 60000)" oninput="updateTotalBudget()">
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="label">Categories</div>
+        <div id="category-container"></div>
+        <div style="margin-top: 20px; border-top: 1px dashed #ddd; padding-top: 15px;">
+            <div class="label">Add New Category</div>
+            <div style="display:flex; gap:8px;">
+                <input type="text" id="new-cat-name" placeholder="e.g. Health">
+                <button onclick="addCategory()" style="background:#2d3436; color:white;">Add</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="label">Expense History</div>
+        <div id="history-container" class="history-list"></div>
+    </div>
+
+    <button onclick="clearAll()" style="background:none; color:var(--danger); margin: 20px 0 40px 0; border: 1px solid #ff000022;">Reset All Data</button>
+</div>
+
+<script>
+    let myChart;
+    const currentMonth = "2026-01"; 
+
+    window.onload = () => { loadData(); };
+
+    function getStore() {
+        let data = localStorage.getItem(`ft_${currentMonth}`);
+        if (!data) {
+            data = { limit: 50000, categories: { "Housing": 0, "Food": 0 }, history: [] };
+            localStorage.setItem(`ft_${currentMonth}`, JSON.stringify(data));
+            return data;
+        }
+        return JSON.parse(data);
+    }
+
+    function loadData() {
+        const data = getStore();
+        
+        // Populate the edit field with existing limit
+        document.getElementById('monthly-limit-input').value = data.limit;
+        document.getElementById('disp-limit').innerText = `₹${data.limit.toLocaleString('en-IN')}`;
+        
+        // Render Categories
+        const container = document.getElementById('category-container');
+        container.innerHTML = "";
+        for (let name in data.categories) {
+            const div = document.createElement('div');
+            div.className = 'category-item';
+            div.innerHTML = `
+                <div class="cat-top-row">
+                    <span class="cat-name-section">${name}</span>
+                    <div class="cat-action-section">
+                        <span style="color:var(--danger); font-weight:bold;">₹${data.categories[name].toLocaleString('en-IN')}</span>
+                        <button class="btn-cross" onclick="removeCategory('${name}')">×</button>
+                    </div>
+                </div>
+                <div class="spend-input-row">
+                    <input type="number" placeholder="Amt..." id="in-${name}">
+                    <button class="btn-spend" onclick="recordSpend('${name}')">Spend</button>
+                </div>
+            `;
+            container.appendChild(div);
+        }
+
+        // Render History
+        const histContainer = document.getElementById('history-container');
+        histContainer.innerHTML = data.history.length ? "" : "<div style='color:#ccc; text-align:center;'>No history yet</div>";
+        data.history.slice().reverse().forEach((item, index) => {
+            const realIndex = (data.history.length - 1) - index;
+            const div = document.createElement('div');
+            div.className = 'history-item';
+            div.innerHTML = `
+                <div><strong>${item.cat}</strong><br><small style="color:#999">${item.date}</small></div>
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <span style="color:var(--danger); font-weight:bold;">-₹${item.amount.toLocaleString('en-IN')}</span>
+                    <button class="btn-cross" style="font-size:1.2rem;" onclick="deleteHistoryItem(${realIndex})">×</button>
+                </div>
+            `;
+            histContainer.appendChild(div);
+        });
+
+        calculate(data);
+    }
+
+    // Function to update the total budget limit
+    function updateTotalBudget() {
+        const newVal = parseFloat(document.getElementById('monthly-limit-input').value) || 0;
+        const data = getStore();
+        data.limit = newVal;
+        localStorage.setItem(`ft_${currentMonth}`, JSON.stringify(data));
+        
+        // Update the display at the top immediately
+        document.getElementById('disp-limit').innerText = `₹${newVal.toLocaleString('en-IN')}`;
+        calculate(data);
+    }
+
+    function recordSpend(catName) {
+        const input = document.getElementById(`in-${catName}`);
+        const amount = parseFloat(input.value) || 0;
+        if (amount <= 0) return;
+
+        const data = getStore();
+        data.categories[catName] += amount;
+        data.history.push({
+            cat: catName,
+            amount: amount,
+            date: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        });
+
+        localStorage.setItem(`ft_${currentMonth}`, JSON.stringify(data));
+        input.value = "";
+        loadData();
+    }
+
+    function removeCategory(catName) {
+        if(confirm(`Remove "${catName}" and its history?`)) {
+            const data = getStore();
+            delete data.categories[catName];
+            data.history = data.history.filter(item => item.cat !== catName);
+            localStorage.setItem(`ft_${currentMonth}`, JSON.stringify(data));
+            loadData();
+        }
+    }
+
+    function deleteHistoryItem(index) {
+        const data = getStore();
+        const item = data.history[index];
+        if (data.categories[item.cat]) data.categories[item.cat] -= item.amount;
+        data.history.splice(index, 1);
+        localStorage.setItem(`ft_${currentMonth}`, JSON.stringify(data));
+        loadData();
+    }
+
+    function addCategory() {
+        const name = document.getElementById('new-cat-name').value.trim();
+        if (!name) return;
+        const data = getStore();
+        if (!data.categories[name]) data.categories[name] = 0;
+        localStorage.setItem(`ft_${currentMonth}`, JSON.stringify(data));
+        document.getElementById('new-cat-name').value = "";
+        loadData();
+    }
+
+    function calculate(data) {
+        let totalSpent = 0;
+        let labels = [], values = [];
+        for (let name in data.categories) {
+            totalSpent += data.categories[name];
+            labels.push(name);
+            values.push(data.categories[name]);
+        }
+        const remaining = data.limit - totalSpent;
+
+        document.getElementById('disp-spent').innerText = `₹${totalSpent.toLocaleString('en-IN')}`;
+        document.getElementById('disp-rem').innerText = `₹${remaining.toLocaleString('en-IN')}`;
+        
+        const remBox = document.getElementById('rem-container');
+        remBox.className = remaining < 0 ? 'remaining-box over-budget' : 'remaining-box';
+        document.getElementById('disp-rem').style.color = remaining < 0 ? 'var(--danger)' : 'var(--success)';
+
+        const ctx = document.getElementById('budgetChart').getContext('2d');
+        if (myChart) myChart.destroy();
+        myChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: labels,
+                datasets: [{ data: values, backgroundColor: ['#6c5ce7', '#00b894', '#0984e3', '#fdcb6e', '#fab1a0'], borderWidth: 0 }]
+            },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+        });
+    }
+
+    function clearAll() {
+        if(confirm("Wipe all data?")) {
+            localStorage.clear();
+            location.reload();
+        }
+    }
+</script>
+</body>
+</html>
